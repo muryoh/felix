@@ -29,6 +29,7 @@ import org.osgi.framework.BundleContext;
 
 import java.lang.reflect.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * This class defines the container of primitive instances. It manages content initialization
@@ -141,13 +142,38 @@ public class InstanceManager implements ComponentInstance, InstanceStateListener
      * The map of [field, value], storing POJO managed
      * field value.
      */
-    private Map m_fields = new HashMap();
+    private Map m_fields = new ConcurrentHashMap();
 
     /**
      * The Map storing the Method objects by ids.
      * [id=>{@link Method}].
      */
-    private Map m_methods =  Collections.synchronizedMap(new HashMap());
+    private Map m_methods =  new ConcurrentHashMap();
+    private static Member NO_METHOD = new Member() {
+        @Override
+        public Class<?> getDeclaringClass()
+        {
+            return null;
+        }
+
+        @Override
+        public String getName()
+        {
+            return null;
+        }
+
+        @Override
+        public int getModifiers()
+        {
+            return 0;
+        }
+
+        @Override
+        public boolean isSynthetic()
+        {
+            return false;
+        }
+    };
 
     /**
      * The instance's bundle context.
@@ -1180,10 +1206,7 @@ public class InstanceManager implements ComponentInstance, InstanceStateListener
      * @return the value decided by the last asked handler (throws a warning if two fields decide two different values)
      */
     public Object onGet(Object pojo, String fieldName) {
-        Object initialValue = null;
-        synchronized (this) { // Stack confinement.
-            initialValue = m_fields.get(fieldName);
-        }
+        Object initialValue = m_fields.get(fieldName);
         Object result = initialValue;
         boolean hasChanged = false;
         // Get the list of registered handlers
@@ -1211,9 +1234,7 @@ public class InstanceManager implements ComponentInstance, InstanceStateListener
         if (hasChanged) {
             // A change occurs => notify the change
             //TODO consider just changing the reference, however multiple thread can be an issue
-            synchronized (this) {
-                m_fields.put(fieldName, result);
-            }
+            m_fields.put(fieldName, result);
             // Call onset outside of a synchronized block.
             for (int i = 0; list != null && i < list.length; i++) {
                 list[i].onSet(pojo, fieldName, result);
@@ -1309,6 +1330,9 @@ public class InstanceManager implements ComponentInstance, InstanceStateListener
     private Member getMethodById(String methodId) {
         // Used a synchronized map.
         Member member = (Member) m_methods.get(methodId);
+        if (member == NO_METHOD) {
+            member = null;
+        }
         if (!m_methods.containsKey(methodId) && m_clazz != null) {
             // Is it a inner class method
             if (methodId.contains("___")) { // Mark to detect a inner class method.
@@ -1323,7 +1347,7 @@ public class InstanceManager implements ComponentInstance, InstanceStateListener
                     // We can't find the member objects from anonymous methods, identified by their numeric name
                     // Just escaping in this case.
                     if (innerClassName.matches("-?\\d+")) {
-                        m_methods.put(methodId, null);
+                        m_methods.put(methodId, NO_METHOD);
                         return null;
                     }
 
@@ -1388,12 +1412,8 @@ public class InstanceManager implements ComponentInstance, InstanceStateListener
      * @param objectValue the new value of the field
      */
     public void onSet(final Object pojo, final String fieldName, final Object objectValue) {
-        synchronized (this) {
-            // First, store the new value.
-            // This must be done in a synchronized block to avoid
-            // concurrent modification
-            m_fields.put(fieldName, objectValue);
-        }
+        // First, store the new value.
+        m_fields.put(fieldName, objectValue);
         // The registrations cannot be modified, so we can directly access
         // the interceptor list.
         FieldInterceptor[] list = (FieldInterceptor[]) m_fieldRegistration
