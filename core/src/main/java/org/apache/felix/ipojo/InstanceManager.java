@@ -1327,7 +1327,7 @@ public class InstanceManager implements ComponentInstance, InstanceStateListener
      * @param methodId the method id
      * @return the method object or <code>null</code> if the method cannot be found.
      */
-    private Member getMethodById(String methodId) {
+    private Member getMethodById(final String methodId) {
         // Used a synchronized map.
         Member member = (Member) m_methods.get(methodId);
         if (member == NO_METHOD) {
@@ -1342,7 +1342,7 @@ public class InstanceManager implements ComponentInstance, InstanceStateListener
                     return null;
                 } else {
                     String innerClassName = split[0];
-                    methodId = split[1];
+                    String innerMethodName = split[1];
 
                     // We can't find the member objects from anonymous methods, identified by their numeric name
                     // Just escaping in this case.
@@ -1355,16 +1355,17 @@ public class InstanceManager implements ComponentInstance, InstanceStateListener
                         if (innerClassName.equals(c.getSimpleName())) {
                             Method[] mets = c.getDeclaredMethods();
                             for (Method met : mets) {
-                                if (MethodMetadata.computeMethodId(met).equals(methodId)) {
+                                if (MethodMetadata.computeMethodId(met).equals(innerMethodName)) {
                                     // Store the new methodId
                                     m_methods.put(methodId, met);
                                     return met;
                                 }
                             }
                         }
-                        m_logger.log(Logger.INFO, "Cannot find the member associated to " + methodId + " - reason: " +
-                                "cannot find the class " + innerClassName + " declared in " + m_clazz.getName());
                     }
+                    m_logger.log(Logger.INFO, "Cannot find the member associated to " + methodId + " - reason: " +
+                        "cannot find the class " + innerClassName + " declared in " + m_clazz.getName());
+                    return null;
                 }
             }
 
