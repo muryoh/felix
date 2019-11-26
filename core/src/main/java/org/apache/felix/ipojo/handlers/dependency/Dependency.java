@@ -565,6 +565,9 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
      * @see org.apache.felix.ipojo.util.DependencyModel#onServiceArrival(org.osgi.framework.ServiceReference)
      */
     public void onServiceArrival(ServiceReference reference) {
+        if (m_usage != null) {
+            m_usage.markOutdated();
+        }
         callBindMethod(reference);
         //The method is only called when a new service arrives, or when the used one is replaced.
     }
@@ -576,6 +579,9 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
      * @see org.apache.felix.ipojo.util.DependencyModel#onServiceModification(org.osgi.framework.ServiceReference)
      */
     public void onServiceModification(ServiceReference reference) {
+        if (m_usage != null) {
+            m_usage.markOutdated();
+        }
         callModifyMethod(reference);
     }
 
@@ -586,6 +592,9 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
      * @see org.apache.felix.ipojo.util.DependencyModel#onServiceDeparture(org.osgi.framework.ServiceReference)
      */
     public void onServiceDeparture(ServiceReference ref) {
+        if (m_usage != null) {
+            m_usage.markOutdated();
+        }
         callUnbindMethod(ref);
     }
 
@@ -599,6 +608,9 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
      * @see org.apache.felix.ipojo.util.DependencyModel#onDependencyReconfiguration(org.osgi.framework.ServiceReference[], org.osgi.framework.ServiceReference[])
      */
     public void onDependencyReconfiguration(ServiceReference[] departs, ServiceReference[] arrivals) {
+        if (m_usage != null) {
+            m_usage.markOutdated();
+        }
         for (int i = 0; departs != null && i < departs.length; i++) {
             callUnbindMethod(departs[i]);
         }
@@ -661,13 +673,15 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
         Usage usage = (Usage) m_usage.get();
         if (usage.m_stack == 0) { // uninitialized usage.
             if (usage.m_componentStack > 0) {
-                // We comes from the component who didn't touch the service.
-                // So we initialize the usage.
-                createServiceObject(usage);
+                if (!usage.isUpToDate()) {
+                    // We comes from the component who didn't touch the service.
+                    // So we initialize the usage.
+                    createServiceObject(usage);
+                }
                 usage.inc(); // Start the caching, so set the stack level to 1
                 m_usage.set(usage); // Required by Dalvik.
                 if (isAggregate()) {
-                    Object obj = usage.m_object;
+                    Object obj = usage.getObject();
                     if (obj instanceof Set) {
                         List<Object> list = new ArrayList<Object>();
                         list.addAll((Set) obj);
@@ -677,7 +691,7 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
                         return obj;
                     }
                 } else {
-                    return usage.m_object;
+                    return usage.getObject();
                 }
             } else {
                 // External access => Immediate get.
@@ -707,7 +721,7 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
             // Use the copy.
             // if the copy is a set, transform to a list
             if (isAggregate()) {
-                Object obj = usage.m_object;
+                Object obj = usage.getObject();
                 if (obj instanceof Set) {
                     List<Object> list = new ArrayList<Object>();
                     list.addAll((Set) obj);
@@ -717,7 +731,7 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
                     return obj;
                 }
             } else {
-                return usage.m_object;
+                return usage.getObject();
             }
 
         }
@@ -738,12 +752,14 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
         // Initialize the thread local object is not already touched.
         Usage usage = m_usage.get();
         if (usage.m_stack == 0) { // uninitialized usage.
-            createServiceObject(usage);
+            if (!usage.isUpToDate()) {
+                createServiceObject(usage);
+            }
             usage.inc(); // Start the caching, so set the stack level to 1
             m_usage.set(usage); // Required by Dalvik
         }
         if (!m_isProxy) {
-            return usage.m_object;
+            return usage.getObject();
         } else {
             return m_proxyObject;
         }
@@ -777,17 +793,17 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
                     m_handler.warn("[" + m_handler.getInstanceManager().getInstanceName() + "] The dependency is not optional, however no service object can be injected in " + m_field + " -> " + getSpecification().getName());
                     createNullableObject();
                 }
-                usage.m_object = m_nullable; // Add null if the Nullable pattern is disabled.
+                usage.setObject(m_nullable); // Add null if the Nullable pattern is disabled.
             } else {
                 ServiceReference ref = getServiceReference();
-                usage.m_object = getService(ref);
+                usage.setObject(getService(ref));
             }
         } else {
             switch(m_type) {
                 case ARRAY:
                     try {
                         if (refs == null) {
-                            usage.m_object = (Object[]) Array.newInstance(getSpecification(), 0); // Create an empty array.
+                            usage.setObject((Object[]) Array.newInstance(getSpecification(), 0)); // Create an empty array.
                         } else {
                             //  Use a reflective construction to avoid class cast exception. This method allows setting the component type.
                             Object[] objs = (Object[]) Array.newInstance(getSpecification(), refs.length);
@@ -795,7 +811,7 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
                                 ServiceReference ref = refs[i];
                                 objs[i] = getService(ref);
                             }
-                            usage.m_object = objs;
+                            usage.setObject(objs);
                         }
                     } catch (ArrayStoreException e) {
                         throw new RuntimeException("Cannot create the array - Check that the bundle can access the service interface", e);
@@ -803,38 +819,38 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
                     break;
                 case LIST:
                     if (refs == null) {
-                        usage.m_object = Collections.emptyList();
+                        usage.setObject(Collections.emptyList());
                     } else {
                         // Use a list to store service objects
                         List<Object> objs = new ArrayList<Object>(refs.length);
                         for (ServiceReference ref : refs) {
                             objs.add(getService(ref));
                         }
-                        usage.m_object = objs;
+                        usage.setObject(objs);
                     }
                     break;
                 case SET:
                     if (refs == null) {
-                        usage.m_object = Collections.emptySet();
+                        usage.setObject(Collections.emptySet());
                     } else {
                         // Use a vector to store service objects
                         Set<Object> objs = new HashSet<Object>(refs.length);
                         for (ServiceReference ref : refs) {
                             objs.add(getService(ref));
                         }
-                        usage.m_object = objs;
+                        usage.setObject(objs);
                     }
                     break;
                 case VECTOR:
                     if (refs == null) {
-                        usage.m_object = new Vector(0); // Create an empty vector.
+                        usage.setObject(new Vector(0)); // Create an empty vector.
                     } else {
                         // Use a vector to store service objects
                         Vector<Object> objs = new Vector<Object>(refs.length);
                         for (ServiceReference ref : refs) {
                             objs.add(getService(ref));
                         }
-                        usage.m_object = objs;
+                        usage.setObject(objs);
                     }
                     break;
             }
@@ -934,12 +950,7 @@ public class Dependency extends DependencyModel implements FieldInterceptor, Met
             Usage usage = m_usage.get();
             usage.decComponentStack();
             if (usage.m_stack > 0) {
-                if (usage.dec()) {
-                    // Exit the method flow => Release all objects
-                    usage.clear();
-                    // Also remove the thread local object.
-                    m_usage.remove();
-                }
+                usage.dec();
             }
         }
     }
