@@ -18,6 +18,13 @@
  */
 package org.apache.felix.ipojo.handlers.dependency;
 
+import java.security.Provider;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Object managing thread local copy of required services.
@@ -38,13 +45,15 @@ public class ServiceUsage extends ThreadLocal<ServiceUsage.Usage> {
         /**
          * Object to inject.
          */
-        Object m_object;
+        private Object m_object;
         
         /**
          * Tracks the number of component method called
          * in the current thread.
          */
         int m_componentStack = 0;
+
+        private volatile boolean m_uptodate = false;
         
         /**
          * Increment the stack level from the first
@@ -60,7 +69,7 @@ public class ServiceUsage extends ThreadLocal<ServiceUsage.Usage> {
         public void incComponentStack() {
             m_componentStack++;
         }
-        
+
         /**
          * Decrement the stack level.
          * @return  true if the stack is 0 after the decrement.
@@ -69,7 +78,7 @@ public class ServiceUsage extends ThreadLocal<ServiceUsage.Usage> {
             m_stack--;
             return m_stack == 0;
         }
-        
+
         /**
          * Decrement the component stack level.
          * @return  true if the stack is 0 after the decrement.
@@ -78,14 +87,39 @@ public class ServiceUsage extends ThreadLocal<ServiceUsage.Usage> {
             m_componentStack--;
             return m_componentStack == 0;
         }
-        
-        /**
-         * Clear the service object array.
-         */
-        public void clear() {
-            m_object = null;
+
+        public Object getObject()
+        {
+            return m_object;
         }
-        
+
+        public void setObject(Object object)
+        {
+            m_object = object;
+            m_uptodate = true;
+        }
+
+        public boolean isUpToDate()
+        {
+            return m_uptodate;
+        }
+    }
+
+    /**
+     * Keep track of provided {@link Usage}s to be able to invalid them (see {@link #markOutdated()})
+     * Weak reference based to avoid preventing the Usages from being GC'd
+     */
+    private Set<Usage> usages = Collections.newSetFromMap(new WeakHashMap<Usage, Boolean>());
+
+    /**
+     * Marks all associated {@link Usage} as not being up to date, meaning
+     * they should be re-computed
+     */
+    public void markOutdated() {
+        for (Usage usage : usages)
+        {
+            usage.m_uptodate = false;
+        }
     }
     
     /**
@@ -94,7 +128,8 @@ public class ServiceUsage extends ThreadLocal<ServiceUsage.Usage> {
      * @see java.lang.ThreadLocal#initialValue()
      */
     public Usage initialValue() {
-        return new Usage();
-    }   
-
+        Usage usage = new Usage();
+        usages.add(usage);
+        return usage;
+    }
 }
